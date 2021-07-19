@@ -329,9 +329,10 @@ public class CompuOrgService {
      * @author snow create 2021/01/23 16:32
      *            modified 2021/01/23 19:22
      *            modified 2021/03/27 21:23
-     * @param userId
-     * @param ip
-     * @return
+     *            modified 2021/05/24 11:37
+     * @param userId 用户id
+     * @param ip ip地址
+     * @return 操作结果
      */
     public ReturnObject userVerifyEmail(Long userId, String ip){
         ReturnObject<User> retObj = userDao.findUserById(userId);
@@ -339,6 +340,9 @@ public class CompuOrgService {
             return retObj;
         }
         User user = retObj.getData();
+        if(user.getDecryptEmail() == null){
+            return new ReturnObject(ResponseCode.EMAIL_EMPTY);
+        }
         if(userDao.isAllowRequestForVerifyCode(ip)) {
             //生成验证码
             logger.debug("Ok!");
@@ -373,10 +377,10 @@ public class CompuOrgService {
             logger.debug("VerifyCode: " + verifyCode);
             userDao.putVerifyCodeIntoRedis(verifyCode, userId);
             String emailContent, title;
+            if(userDao.isEmailAlreadyExist(AES.encrypt(email, User.AES_PASS))){
+                return new ReturnObject(ResponseCode.EMAIL_REGISTERED);
+            }
             if("-3835".equals(userId)){
-                if(userDao.isEmailAlreadyExist(email)){
-                    return new ReturnObject(ResponseCode.EMAIL_REGISTERED);
-                }
                 title = registrationTitle;
                 emailContent = "您正在【计算机组成原理平台】进行注册，您的验证码为：" + verifyCode + "，请于5分钟内完成注册！";
             }
@@ -459,6 +463,9 @@ public class CompuOrgService {
      */
     public ReturnObject generateTest(Long studentId, Long departId, Long experimentId, Long size){
         ReturnObject retObj = getTestResultDetailByExperimentId(studentId, departId, experimentId);
+        if (retObj.getCode() == ResponseCode.AUTH_NOT_ALLOW){
+            return retObj;
+        }
         logger.error(retObj.getCode().toString());
         if(retObj.getData() != null){
             return new ReturnObject(ResponseCode.AUTH_NOT_ALLOW);
@@ -529,9 +536,6 @@ public class CompuOrgService {
         }
         PageHelper.startPage(page, pageSize);
         PageInfo<TopicPo> topicPos = testDao.findTopicList(experimentId);
-        if(topicPos == null){
-            return new ReturnObject<>(ResponseCode.NO_MORE_TOPIC);
-        }
         List<VoObject> topicList = topicPos.getList().stream().map(Topic::new).filter(Topic::authentic).collect(Collectors.toList());
 
         PageInfo<VoObject> retObj = new PageInfo<>(topicList);
@@ -549,14 +553,15 @@ public class CompuOrgService {
      *            modified 2021/01/25 23:43
      *            modified 2021/01/28 13:27
      *            modified 2021/04/07 17:40
-     * @param studentId
-     * @param departId
-     * @param testVo
-     * @return
+     *            modified 2021/05/25 17:41
+     * @param studentId 学生id
+     * @param departId 角色id
+     * @param testVo 测试结果
+     * @return 操作结果
      */
     public ReturnObject commitTestResult(Long studentId, Long departId, TestVo testVo){
         ReturnObject retObj = getTestResultDetailByExperimentId(studentId, departId, testVo.getExperimentId());
-        if(retObj.getData() != null){
+        if(retObj.getData() != null || retObj.getCode() == ResponseCode.AUTH_NOT_ALLOW){
             return new ReturnObject(ResponseCode.AUTH_NOT_ALLOW);
         }
         TestResult testResult = new TestResult();
@@ -585,26 +590,24 @@ public class CompuOrgService {
      * @author snow create 2021/01/25 23:15
      *            modified 2021/01/28 12:43
      *            modified 2021/03/25 10:24
-     * @param departId
-     * @param userId
-     * @param experimentId
-     * @param studentId
-     * @param modified
-     * @param page
-     * @param pageSize
-     * @return
+     *            modified 2021/05/24 13:18
+     * @param departId 角色id
+     * @param userId 用户id
+     * @param experimentId 实验序号
+     * @param studentId 学生id
+     * @param modified 是否已批改
+     * @param page 页码
+     * @param pageSize 页大小
+     * @return 结果列表
      */
     public ReturnObject<PageInfo<VoObject>> getTestResultList(Long departId, Long userId,
                                                         Long experimentId, Long studentId, Boolean modified,
                                                         Integer page, Integer pageSize){
-        if(studentDepartId.equals(departId) && !userId.equals(studentId)){
-            return new ReturnObject(ResponseCode.RESOURCE_ID_OUTSCOPE);
+        if(studentDepartId.equals(departId)){
+            studentId = userId;
         }
         PageHelper.startPage(page, pageSize);
         PageInfo<TestResultPo> testResultPo = testDao.findTestResult(experimentId, studentId, modified);
-        if(testResultPo == null){
-            return new ReturnObject<>(ResponseCode.AUTH_NEED_LOGIN);
-        }
         List<VoObject> testResultBrief = testResultPo.getList().stream().map(TestResult::new).filter(TestResult::authentic).collect(Collectors.toList());
 
         PageInfo<VoObject> retObj = new PageInfo<>(testResultBrief);
@@ -670,7 +673,7 @@ public class CompuOrgService {
     @Transactional
     public ReturnObject commitTestResultScore(Long departId, Long testResultId, TestResultScoreVo testResultScore){
         if(studentDepartId.equals(departId)){
-            return new ReturnObject(ResponseCode.RESOURCE_ID_OUTSCOPE);
+            return new ReturnObject(ResponseCode.AUTH_NOT_ALLOW);
         }
         Integer totalScore = 0;
         ReturnObject retObj;
